@@ -1,17 +1,32 @@
 from __future__ import annotations
 
 import csv
+import json
 import math
-import random
 from pathlib import Path
 from typing import Any
 
 from article_study import run_article_study
 from config_manager import get_missing_ai_settings, load_config
+from learning_history import (
+    HistoryRecord,
+    ensure_history_file as _ensure_history_file,
+    load_history_records,
+    load_learning_state,
+    save_history_records,
+    record_completed_session,
+    utc_now,
+)
+from vital_ranker import (
+    CATEGORY_LABELS,
+    CATEGORY_UNSEEN,
+    RankerSettings,
+    SelectionPlan,
+    article_target_word_count,
+    build_selection_plan,
+)
+from vocabulary_store import ensure_registry, get_active_profile
 from word_study import run_word_study
-
-HISTORY_HEADERS = ["单词", "熟练程度"]
-REVIEW_WEIGHTS = {2: 20, 3: 10, 4: 5, 5: 1}
 
 
 class LearningDataError(RuntimeError):
@@ -19,74 +34,73 @@ class LearningDataError(RuntimeError):
 
 
 def ensure_history_file(history_path: Path) -> None:
-    if history_path.exists():
-        return
-    history_path.parent.mkdir(parents=True, exist_ok=True)
-    with history_path.open("w", encoding="utf-8-sig", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=HISTORY_HEADERS)
-        writer.writeheader()
+    """Backward-compatible wrapper for the pre-v1.4 desktop API."""
+    _ensure_history_file(history_path)
 
 
 def load_history(history_path: Path) -> dict[str, int]:
-    ensure_history_file(history_path)
-    history: dict[str, int] = {}
+    """Load legacy ``word -> mastery`` data from either history format."""
     try:
-        with history_path.open("r", encoding="utf-8-sig", newline="") as file:
-            reader = csv.DictReader(file)
-            if reader.fieldnames is None or not set(HISTORY_HEADERS).issubset(reader.fieldnames):
-                raise LearningDataError(
-                    f"{history_path.name} 必须包含“单词”和“熟练程度”两列。"
-                )
-            for row in reader:
-                word = (row.get("单词") or "").strip()
-                if not word:
-                    continue
-                try:
-                    level = int(row.get("熟练程度", "1"))
-                except ValueError:
-                    level = 1
-                history[word] = min(5, max(1, level))
-    except UnicodeDecodeError as exc:
-        raise LearningDataError(
-            f"无法以 UTF-8 读取 {history_path.name}，请将文件保存为 UTF-8 CSV。"
-        ) from exc
-    return history
+        records = load_history_records(history_path)
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        raise LearningDataError(str(exc)) from exc
+    return {record.word: record.mastery_level for record in records.values()}
 
 
 def save_history(history_path: Path, history: dict[str, int]) -> None:
-    temp_path = history_path.with_suffix(".csv.tmp")
-    with temp_path.open("w", encoding="utf-8-sig", newline="") as file:
-        writer = csv.DictWriter(file, fieldnames=HISTORY_HEADERS)
-        writer.writeheader()
-        for word in sorted(history, key=str.casefold):
-            writer.writerow({"单词": word, "熟练程度": history[word]})
-    temp_path.replace(history_path)
+    """Preserve the old public helper while writing the extended summary format."""
+    try:
+        existing = load_history_records(history_path)
+    except (OSError, ValueError, UnicodeDecodeError):
+        existing = {}
+    now = utc_now()
+    records: dict[str, HistoryRecord] = {}
+    for word, raw_level in history.items():
+        clean_word = str(word).strip()
+        if not clean_word:
+            continue
+        try:
+            level = max(1, min(5, int(raw_level)))
+        except (TypeError, ValueError):
+            level = 1
+        previous = existing.get(clean_word.casefold())
+        records[clean_word.casefold()] = HistoryRecord(
+            word=clean_word,
+            mastery_level=level,
+            study_count=previous.study_count if previous else 1,
+            last_first_score=previous.last_first_score if previous else level,
+            last_second_score=previous.last_second_score if previous else level,
+            first_studied_at=previous.first_studied_at if previous else now,
+            last_studied_at=previous.last_studied_at if previous else now,
+        )
+    save_history_records(history_path, records)
 
 
 def load_vocabulary(vocabulary_path: Path) -> list[dict[str, str]]:
     if not vocabulary_path.exists():
         raise LearningDataError(
-            f"未找到 {vocabulary_path.name}。请把它放在主程序所在目录。"
+            f"未找到 {vocabulary_path.name}。请先在“管理词库与学习历史”中创建并启用词库。"
         )
-
-    encodings = ("utf-8-sig", "utf-8")
     last_error: Exception | None = None
-    for encoding in encodings:
+    for encoding in ("utf-8-sig", "utf-8"):
         try:
             with vocabulary_path.open("r", encoding=encoding, newline="") as file:
                 reader = csv.DictReader(file)
                 if not reader.fieldnames or "word" not in reader.fieldnames:
-                    raise LearningDataError(
-                        f"{vocabulary_path.name} 必须包含 word 列。"
-                    )
+                    raise LearningDataError(f"{vocabulary_path.name} 必须包含 word 列。")
                 result: list[dict[str, str]] = []
                 seen: set[str] = set()
                 for row in reader:
                     word = (row.get("word") or "").strip()
-                    if not word or word in seen:
+                    key = word.casefold()
+                    if not word or key in seen:
                         continue
-                    seen.add(word)
-                    normalized = {key: (value or "") for key, value in row.items() if key is not None}
+                    seen.add(key)
+                    normalized = {
+                        str(field): str(value or "")
+                        for field, value in row.items()
+                        if field is not None
+                    }
                     normalized["word"] = word
                     result.append(normalized)
                 if not result:
@@ -100,51 +114,40 @@ def load_vocabulary(vocabulary_path: Path) -> list[dict[str, str]]:
     ) from last_error
 
 
-def _build_review_candidate_pool(
-    review_groups: dict[int, list[str]], needed: int
-) -> list[str]:
-    """Build a capped 20:10:5:1 candidate pool, then sample uniformly later.
-
-    Each quota round adds at most 20 level-2, 10 level-3, 5 level-4 and
-    1 level-5 word.  Extra rounds are used only when shortages leave the
-    candidate pool smaller than the number of review words required.
-    """
-    remaining = {level: words[:] for level, words in review_groups.items()}
-    for words in remaining.values():
-        random.shuffle(words)
-
-    candidate_pool: list[str] = []
-    while len(candidate_pool) < needed and any(remaining.values()):
-        added_this_round = 0
-        for level, quota in REVIEW_WEIGHTS.items():
-            group = remaining.get(level, [])
-            take = min(quota, len(group))
-            if take:
-                candidate_pool.extend(group[:take])
-                del group[:take]
-                added_this_round += take
-        if added_this_round == 0:
-            break
-
-    return candidate_pool
+def _merge_scores(first_score: int, second_score: int) -> int:
+    return max(1, min(5, math.floor((first_score + 2 * second_score) / 3)))
 
 
-def _priority_new_word_pool(
-    all_words: list[str], history: dict[str, int], excluded: set[str] | None = None
-) -> list[str]:
-    """Return level-1 history words first, followed by truly unseen words."""
-    excluded = excluded or set()
-    known_level_one = [
-        word
-        for word in all_words
-        if word not in excluded and word in history and history[word] == 1
-    ]
-    unseen = [
-        word for word in all_words if word not in excluded and word not in history
-    ]
-    random.shuffle(known_level_one)
-    random.shuffle(unseen)
-    return known_level_one + unseen
+def _serialize_plan(plan: SelectionPlan, vocabulary_id: str) -> dict[str, Any]:
+    return {
+        "vocabulary_id": vocabulary_id,
+        "policy_version": plan.policy_version,
+        "summary": plan.summary,
+        "selected": [
+            {
+                "word": item.spelling,
+                "category": item.category,
+                "category_label": CATEGORY_LABELS.get(item.category, item.category),
+                "score": round(item.score, 8),
+                "selected_by": item.selected_by,
+                "selection_probability": item.selection_probability,
+                "display_order": item.display_order,
+                "second_display_order": item.second_display_order,
+                "features": item.features,
+                "reasons": item.reasons,
+            }
+            for item in plan.selected
+        ],
+    }
+
+
+def _append_selection_audit(
+    base_dir: Path, plan: SelectionPlan, vocabulary_id: str
+) -> None:
+    path = base_dir / "selectionAudit.jsonl"
+    payload = _serialize_plan(plan, vocabulary_id)
+    with path.open("a", encoding="utf-8") as file:
+        file.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 
 def select_words(
@@ -153,63 +156,37 @@ def select_words(
     total_count: int,
     new_count: int,
 ) -> list[dict[str, str]]:
-    """Select unique words using priority-new and capped review-group quotas."""
-    by_word = {item["word"]: item for item in vocabulary}
-    all_words = list(by_word)
-    total_count = min(max(1, total_count), len(all_words))
-    new_count = min(max(0, new_count), total_count)
+    """Compatibility helper for older imports.
 
-    # "New-learning" slots prioritize words already seen but still rated 1.
-    # Only after those are exhausted do truly unseen words enter these slots.
-    priority_new = _priority_new_word_pool(all_words, history)
-    selected: list[str] = priority_new[:new_count]
-    selected_set = set(selected)
-
-    review_needed = total_count - len(selected)
-    review_groups: dict[int, list[str]] = {level: [] for level in REVIEW_WEIGHTS}
-    for word, level in history.items():
-        if (
-            level in review_groups
-            and word in by_word
-            and word not in selected_set
-        ):
-            review_groups[level].append(word)
-
-    candidate_pool = _build_review_candidate_pool(review_groups, review_needed)
-    review_take = min(review_needed, len(candidate_pool))
-    review_words = (
-        random.sample(candidate_pool, k=review_take) if review_take else []
+    Unlike the old implementation, mastery level 1 is still a review word. Only
+    words absent from ``history`` count as new. Detailed desktop sessions use
+    :func:`build_selection_plan` with timestamps and two-score history.
+    """
+    records = {
+        word.casefold(): HistoryRecord(
+            word=word,
+            mastery_level=max(1, min(5, int(level))),
+            study_count=1,
+            last_first_score=max(1, min(5, int(level))),
+            last_second_score=max(1, min(5, int(level))),
+        )
+        for word, level in history.items()
+    }
+    plan = build_selection_plan(
+        vocabulary,
+        records,
+        {},
+        [],
+        total_count,
+        new_count,
+        new_word_mode="fixed",
     )
-    selected.extend(review_words)
-    selected_set.update(review_words)
-
-    # If review words are insufficient, fill with remaining level-1 words first
-    # and then unseen words, preserving the same new-word priority.
-    needed = total_count - len(selected)
-    if needed:
-        remaining_new = _priority_new_word_pool(all_words, history, selected_set)
-        selected.extend(remaining_new[:needed])
-        selected_set.update(remaining_new[:needed])
-
-    # Final safeguard for unusually small or inconsistent data files.
-    if len(selected) < total_count:
-        remaining_any = [word for word in all_words if word not in selected_set]
-        random.shuffle(remaining_any)
-        selected.extend(remaining_any[: total_count - len(selected)])
-
-    random.shuffle(selected)
-    return [by_word[word] for word in selected]
-
-
-def _merge_scores(first_score: int, second_score: int) -> int:
-    return max(1, min(5, math.floor((first_score + 2 * second_score) / 3)))
+    return plan.rows_first_order
 
 
 def run_learning_round(parent: Any, base_dir: Path | str) -> dict[str, Any] | None:
     base = Path(base_dir)
     vocabulary_path = base / "vocabulary.csv"
-    history_path = base / "learningHistory.csv"
-
     config = load_config(base)
     missing_ai = get_missing_ai_settings(config)
     if missing_ai:
@@ -217,42 +194,74 @@ def run_learning_round(parent: Any, base_dir: Path | str) -> dict[str, Any] | No
             "请先在设置中填写完整的 AI 信息：" + "、".join(missing_ai)
         )
 
-    ensure_history_file(history_path)
-    vocabulary = load_vocabulary(vocabulary_path)
-    history = load_history(history_path)
+    registry = ensure_registry(base)
+    active_profile = get_active_profile(base)
+    if active_profile is None or not registry.get("active_id"):
+        raise LearningDataError("尚未启用词库，请先创建或选择当前词库。")
 
-    selected = select_words(
+    vocabulary = load_vocabulary(vocabulary_path)
+    records, events_by_word, session_dates = load_learning_state(base)
+    plan = build_selection_plan(
         vocabulary,
-        history,
+        records,
+        events_by_word,
+        session_dates,
         int(config["words_per_round"]),
         int(config["new_words_per_round"]),
+        new_word_mode=str(config.get("new_word_mode", "fixed")),
     )
-    if not selected:
+    if not plan.selected:
         raise LearningDataError("没有可供学习的词汇。")
 
-    first_scores = run_word_study(parent, selected, config, "第一次词义学习")
+    try:
+        _append_selection_audit(base, plan, str(active_profile["id"]))
+    except OSError:
+        # Audit failure must not block the core learning flow.
+        pass
+
+    first_rows = plan.rows_first_order
+    second_rows = plan.rows_second_order
+    first_scores = run_word_study(parent, first_rows, config, "第一次词义学习")
     if first_scores is None:
         return None
 
-    if not run_article_study(parent, selected, config):
+    target_word_count = article_target_word_count(plan, RankerSettings())
+    if not run_article_study(
+        parent,
+        first_rows,
+        config,
+        target_word_count=target_word_count,
+    ):
         return None
 
-    second_scores = run_word_study(parent, selected, config, "第二次词义学习")
+    second_scores = run_word_study(parent, second_rows, config, "第二次词义学习")
     if second_scores is None:
         return None
 
+    session_id, _records = record_completed_session(
+        base,
+        vocabulary_id=str(active_profile["id"]),
+        selected=plan.selected,
+        first_scores=first_scores,
+        second_scores=second_scores,
+        merge_score=_merge_scores,
+    )
     updated: dict[str, int] = {}
-    for item in selected:
-        word = item["word"]
-        first = first_scores.get(word, 1)
-        second = second_scores.get(word, 1)
-        final_score = _merge_scores(first, second)
-        history[word] = final_score
-        updated[word] = final_score
+    for item in plan.selected:
+        first = first_scores.get(item.spelling, 1)
+        second = second_scores.get(item.spelling, 1)
+        updated[item.spelling] = _merge_scores(first, second)
 
-    save_history(history_path, history)
+    actual_counts = dict(plan.summary.get("actual_category_counts", {}))
+    unseen_count = int(actual_counts.get(CATEGORY_UNSEEN, 0))
     return {
-        "word_count": len(selected),
+        "session_id": session_id,
+        "word_count": len(plan.selected),
+        "new_word_count": unseen_count,
+        "review_word_count": len(plan.selected) - unseen_count,
         "updated_scores": updated,
-        "selected_words": [item["word"] for item in selected],
+        "selected_words": [item.spelling for item in plan.selected],
+        "article_target_word_count": target_word_count,
+        "new_word_mode": plan.summary.get("new_word_mode", "fixed"),
+        "effective_unseen_count": plan.summary.get("effective_unseen_count", unseen_count),
     }

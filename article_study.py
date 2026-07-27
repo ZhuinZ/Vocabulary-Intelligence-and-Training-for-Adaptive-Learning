@@ -90,19 +90,25 @@ def _word_is_present(article: str, word: str) -> bool:
     )
 
 
-def generate_article(words: list[str], config: dict[str, Any]) -> tuple[str, list[str]]:
+def generate_article(
+    words: list[str],
+    config: dict[str, Any],
+    target_word_count: int | None = None,
+) -> tuple[str, list[str]]:
     prompt = str(config.get("article_prompt", "")).strip()
     if not prompt:
         raise ValueError("AI 写作提示词不能为空。")
 
     word_list = ", ".join(words)
+    target_word_count = max(80, int(target_word_count or 300))
     messages: list[dict[str, str]] = [
         {"role": "system", "content": prompt},
         {
             "role": "user",
             "content": (
                 "本轮必须着重使用以下英文词汇，并确保每个词都至少以其原形完整出现一次：\n"
-                f"{word_list}\n\n只输出英文文章正文，不要输出词汇表、说明或中文。"
+                f"{word_list}\n\n文章目标长度约 {target_word_count} 个英文词。"
+                "只输出英文文章正文，不要输出词汇表、说明或中文。"
             ),
         },
     ]
@@ -122,7 +128,7 @@ def generate_article(words: list[str], config: dict[str, Any]) -> tuple[str, lis
                     "content": (
                         "请重写整篇英文文章。当前文章没有完整出现这些词的原形："
                         + ", ".join(missing)
-                        + "。请确保所有目标词均至少完整出现一次，文章约300个英文词，只输出正文。"
+                        + f"。请确保所有目标词均至少完整出现一次，文章约 {target_word_count} 个英文词，只输出正文。"
                     ),
                 },
             ]
@@ -166,10 +172,12 @@ class ArticleStudyDialog(tk.Toplevel):
         parent: tk.Misc,
         words: list[dict[str, str]],
         config: dict[str, Any],
+        target_word_count: int | None = None,
     ) -> None:
         super().__init__(parent)
         self.config_data = config
         self.font_family = configure_ui_fonts(self)
+        self.target_word_count = max(80, int(target_word_count or 300))
         self.target_words = [
             item.get("word", "").strip()
             for item in words
@@ -229,7 +237,10 @@ class ArticleStudyDialog(tk.Toplevel):
         target_frame.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 9))
         tk.Label(
             target_frame,
-            text="目标词汇：" + ", ".join(self.target_words),
+            text=(
+                "目标词汇：" + ", ".join(self.target_words)
+                + f"\n文章目标长度：约 {self.target_word_count} 个英文词"
+            ),
             bg=bg,
             fg=fg,
             justify="left",
@@ -445,7 +456,9 @@ class ArticleStudyDialog(tk.Toplevel):
         self._set_text(self.translation_text, "")
         self.stats_label.configure(text="")
         self._run_worker(
-            lambda: generate_article(self.target_words, self.config_data),
+            lambda: generate_article(
+                self.target_words, self.config_data, self.target_word_count
+            ),
             self._article_ready,
             self._article_failed,
         )
@@ -538,7 +551,11 @@ def run_article_study(
     parent: tk.Misc,
     words: list[dict[str, str]],
     config: dict[str, Any],
+    *,
+    target_word_count: int | None = None,
 ) -> bool:
-    dialog = ArticleStudyDialog(parent, words, config)
+    dialog = ArticleStudyDialog(
+        parent, words, config, target_word_count=target_word_count
+    )
     parent.wait_window(dialog)
     return dialog.completed

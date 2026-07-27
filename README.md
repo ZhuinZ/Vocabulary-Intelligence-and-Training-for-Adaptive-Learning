@@ -1,255 +1,367 @@
-# AI 辅助英文单词学习系统
+# VITAL Desktop v1.4.2
 
-这是一个基于 Python 标准库和 Tkinter 的桌面词汇学习程序。
+**VITAL — Vocabulary-Intelligence-and-Training-for-Adaptive-Learning**  
+**词汇智能与自适应训练系统**
 
-## 文件结构
+VITAL Desktop 是一个仅使用 **Python 标准库与 Tkinter** 的桌面英文词汇学习程序。
 
-- `config_manager.py`：创建、读取和编辑 `config.json`
-- `learning_flow.py`：抽词、流程调度、历史记录读写与最终评分
-- `word_study.py`：两阶段词义自评、快捷键与完整词条信息展示
-- `article_study.py`：AI 英文文章生成、阅读计时、词数统计和中文翻译
-- `retrieve.py`：从 ECDICT 的 `stardict.csv` 按一个或多个 tag 生成词库
-- `vocabulary_manager.py`：词库切换和学习历史管理界面
-- `main.py`：主界面和程序入口
-- `vocabulary.csv`：当前使用的词库
-- `learningHistory.csv`：学习历史，首次学习时自动创建
-- `config.json`：配置文件，首次启动时自动创建
+> 开发者：[ZhuinZ](https://github.com/ZhuinZ)  
+> 词典数据来源：[ECDICT](https://github.com/skywind3000/ECDICT)
 
-## 首次运行
+## 本版本重点更新
 
-运行：
+- 严格区分“绝对未学习词”和“熟练度为 1 的旧词”；只有从未存在学习记录的词才算新词。
+- 使用与服务端相同的 VITAL Ranker v0.2.1 规则模型安排每轮词汇。
+- 支持固定新词数量和根据学习间隔、近期保持率自动调整的新词数量。
+- 支持命名词库、多个词库保存、切换、删除和当前词库状态展示。
+- 词库考试范围与网页版统一为：中考、高考、四级、六级、考研、雅思、托福、GRE。
+- 支持“包含任一所选范围”与“同时属于全部所选范围”，并按服务端语义合并同一单词的重复 tag。
+- 保留生成词库中的 `tag` 列，供推荐算法计算考试覆盖度与难度。
+- 增加详细学习事件日志、学习次数、两次最近评分、首次/最近学习时间。
+- 增加学习历史搜索和熟练度筛选。
+- 第二轮词义学习使用错位顺序，词数大于 1 时不会与第一轮处于相同位置。
+- 文章长度按本轮新词和复习词动态计算，不再固定为 300 词。
+- 增加推荐审计日志，记录每个词的类别、分数、原因、概率和两轮顺序。
+- 改进主界面、设置页、词库管理页、状态提示、中文标签和 VITAL 品牌展示。
+- 已删除并停用桌面版 `.bat`、`.ps1` 启动脚本；统一使用 `python main.py`。
+- 保持旧版 `config.json`、`vocabulary.csv` 和两列式 `learningHistory.csv` 兼容。
+
+## 环境要求
+
+- 推荐 Python 3.12；代码不依赖 3.12 独有的第三方包。
+- 仅使用 Python 标准库，无需 `pip install`。
+- Windows 官方 Python 和 Conda 通常自带 Tkinter。
+- 某些 Linux 发行版需要通过系统包管理器安装 `python3-tk`；它不是本项目的 PyPI 依赖。
+
+`requirements.txt` 仅用于明确声明“不需要第三方 Python 包”。
+
+## 启动方式
+
+进入项目目录后运行：
 
 ```bash
 python main.py
 ```
 
-首次启动会弹出词库获取说明。程序使用 ECDICT：
+本版本不再提供或调用 `.bat`、`.ps1` 文件。
 
-https://github.com/skywind3000/ECDICT
+## 首次使用
 
-操作步骤：
+VITAL 不会自动下载大型词典。首次启动会显示 ECDICT 获取说明：
 
-1. 打开 ECDICT GitHub 项目。
-2. 下载项目中的 `stardict.7z`，或下载整个项目后找到该文件。
+1. 打开 [ECDICT](https://github.com/skywind3000/ECDICT)。
+2. 下载 `stardict.7z`，或下载整个项目后找到该文件。
 3. 使用 7-Zip 等工具解压，取得 `stardict.csv`。
-4. 回到主界面，打开“管理词库和学习历史”。
-5. 选择 `stardict.csv`。
-6. 输入一个或多个 tag，例如 `gre`、`cet6`、`ielts toefl`。
-7. 点击“按标签生成并切换词库”。
+4. 启动 VITAL，打开“管理词库与学习历史”。
+5. 填写词库名称并选择 `stardict.csv`。
+6. 选择考试范围及组合方式。
+7. 点击“创建并设为当前词库”。
+8. 打开“学习与 AI 设置”，填写 AI 接口信息。
+9. 返回主界面开始一轮学习。
 
-主界面右下角的“点我下载词库”会再次显示说明并打开 ECDICT 项目。
+## 词库选择逻辑
 
-## 词库管理
+### 允许的考试范围
 
-“管理词库和学习历史”页面支持：
+| tag | 中文名称 | 默认难度系数 |
+|---|---|---:|
+| `zk` | 中考 | 0.15 |
+| `gk` | 高考 | 0.25 |
+| `cet4` | 大学英语四级 | 0.35 |
+| `cet6` | 大学英语六级 | 0.50 |
+| `ky` | 考研英语 | 0.50 |
+| `ielts` | 雅思 | 0.65 |
+| `toefl` | 托福 | 0.65 |
+| `gre` | GRE | 0.85 |
 
-- 按单个 tag 生成词库，例如 `gre`
-- 按多个 tag 生成词库，支持空格、逗号和分号分隔
-- “匹配任意一个 tag”：词条具有任一输入 tag 即可导出
-- “必须同时具有全部 tag”：词条必须同时具有全部输入 tag
-- 自动去除重复单词
-- 自动排除源 CSV 中的 `tag` 列，保留其他词条字段
-- 切换前把当前 `vocabulary.csv` 备份为 `vocabulary.previous.csv`
-- 单独删除全部 `learningHistory.csv` 学习记录
+为了与服务端保持一致，界面创建词库时只允许以上 8 个范围。自定义旧词库仍可继续使用。
 
-也可以直接在控制台使用：
+### 任一范围与全部范围
+
+- **包含任一所选范围（any）**：单词拥有任一所选 tag 即进入词库。
+- **同时属于全部所选范围（all）**：单词必须拥有全部所选 tag 才进入词库。
+
+ECDICT 可能存在大小写不同或重复的同一单词。VITAL 会先按单词的大小写无关键合并其所有 tag，再判断 any/all，行为与服务端导入后的数据库查询一致。输出时：
+
+- 每个单词只保留一条；
+- 非 tag 字段采用源文件中最后一条同名单词记录；
+- `tag` 字段保存该单词全部已合并 tag；
+- 输出使用 UTF-8 with BOM，便于 Excel 和旧版 VITAL 读取。
+
+### 多词库保存与切换
+
+创建词库后，VITAL 会：
+
+- 将不可变快照保存到 `vocabularies/<词库ID>.csv`；
+- 将当前词库同步到旧版固定路径 `vocabulary.csv`；
+- 切换前将原当前词库备份为 `vocabulary.previous.csv`；
+- 在 `vocabularies.json` 保存名称、tag、组合方式、词数、创建时间和当前状态。
+
+已有学习会话引用的词库不能删除，这与服务端的数据完整性规则一致；可以保留它并切换到其他词库。
+
+也可直接使用命令行生成单个 CSV：
 
 ```bash
 python retrieve.py --input stardict.csv --output vocabulary.csv --tags "gre ielts"
 ```
 
-要求同时具有全部 tag：
+要求同时拥有全部范围：
 
 ```bash
 python retrieve.py --input stardict.csv --output vocabulary.csv --tags "gre ielts" --match-all
 ```
 
-## 设置
+## 每轮抽词逻辑：VITAL Ranker v0.2.1
 
-首次学习前请打开“设置”，完整填写：
+### 1. 绝对新词定义
+
+- 单词在学习历史中完全不存在，或明确没有完成学习次数：`unseen`，即绝对新词。
+- 熟练度为 1 但已经学习过：仍然是复习词，通常归入 `weak`，不会占用新词名额。
+
+这是本版本与旧桌面版最重要的行为变化。旧桌面版曾把熟练度 1 优先当作新词；该规则已经移除。
+
+### 2. 新词名额
+
+默认每轮 20 词、绝对新词基准 3 词，与服务端默认值一致。
+
+- **fixed**：使用设置中的新词基准数。
+- **adaptive**：在至少积累 3 个已完成会话后，根据典型学习间隔、当前间隔和近期跨会话保持率调整新词数。
+
+自适应模式会在长时间未学习或近期保持率偏低时减少新词，在节奏稳定且保持率较好时适度增加；最终仍受本轮总词数和最大新词比例约束。
+
+旧 `config.json` 若仍是旧版精确默认值 `20/10`，首次读取时自动迁移为 `20/3`；用户自行设置的其他数值保持不变。
+
+### 3. 复习词分类
+
+已学习词会根据最近两次评分、学习次数、距上次学习时间、历史事件和预测记忆状态分为：
+
+- `weak`：低分、第一次评分为 1，或预测记忆很弱；
+- `stuck`：最近多次学习增益持续偏低且第二次评分仍低；
+- `due_review`：已经开始遗忘，适合现在复习；
+- `maintenance`：记忆状态较好，但需要维护。
+
+### 4. 复习词排序
+
+复习优先级综合：
+
+- **遗忘风险**：依据上次第二次评分对应的半衰期和距上次学习天数预测；
+- **历史学习增益**：比较每次文章学习前后的两次评分；
+- **理想难度**：优先选择“有一定遗忘但仍适合重新激活”的词；
+- **估计不确定性**：学习次数少的词会获得适度探索机会；
+- **重要性**：综合 ECDICT 频率/词频、Collins、词义数、考试 tag 数；
+- **惩罚项**：近期评分下降和长期卡住会降低连续重复安排的概率。
+
+评分不是简单按熟练度排序，也不再使用旧版 `20:10:5:1` 候选池。
+
+### 5. 新词排序
+
+绝对新词综合：
+
+- 词频与重要性；
+- 单词长度、词义数量、考试范围默认难度形成的难度估计；
+- 与当前学习能力的难度匹配；
+- 与已掌握词的词形家族或考试范围联系形成的知识脚手架；
+- 尚未充分掌握的考试范围覆盖缺口；
+- 同时属于多个考试范围时的通用性加成。
+
+### 6. 配额、探索与多样性
+
+在总词数与新词名额确定后：
+
+- 薄弱复习目标约为总词数的 25%；
+- 维护复习目标约为总词数的 10%；
+- 其余复习名额主要分配给到期复习；
+- 卡住词和高难新词有单轮上限，避免一轮过于挫败；
+- 默认约 10% 的位置执行概率探索，其余位置以最高综合价值为主；
+- 使用类似 MMR 的多样性约束，减少连续选择同一词形家族或高度重合 tag 的词；
+- 高分词在 12 小时内进入冷却，除非库存不足需要回填。
+
+若某一类别库存不足，系统按服务端相同的回填优先级从其他类别补足；新用户没有复习词时，剩余位置会全部用绝对新词填满。
+
+### 7. 第二轮顺序
+
+第一轮评分后，第二轮不会简单复用原顺序。词数大于 1 时，系统生成一个**错位排列**：每个词在第二轮的位置都不同于第一轮，从而降低依赖顺序记忆的影响。
+
+### 8. 推荐审计
+
+每次开始学习时，系统向 `selectionAudit.jsonl` 追加一条 JSON 记录，包括：
+
+- 策略版本与当轮参数；
+- 请求配额、实际类别数量、自适应计算结果；
+- 每个词的类别、推荐分数、探索/利用/回填来源；
+- 选择概率、特征、推荐原因；
+- 第一轮和第二轮顺序。
+
+审计写入失败不会阻止正常学习。
+
+## 学习流程
+
+1. 第一轮词义自评。
+2. 查看完整 ECDICT 词条后再次评分。
+3. AI 使用本轮全部目标词生成英文文章。
+4. 阅读完成后统计文章词数与阅读时间。
+5. AI 生成简体中文译文。
+6. 第二轮以错位顺序再次进行完整词义学习。
+7. 计算最终熟练程度并一次性写入学习历史。
+
+用户中途关闭任一学习窗口时，本轮不写入学习历史。
+
+### 最终熟练程度
+
+```text
+floor((第一次词义学习结果 + 2 × 第二次词义学习结果) / 3)
+```
+
+结果限制在 1～5。第二轮权重更高，用于反映文章学习后的状态。
+
+### 动态文章长度
+
+```text
+文章目标词数 = 180 + 35 × 绝对新词数 + 18 × 复习词数
+```
+
+例如，一轮包含 3 个绝对新词和 17 个复习词时，目标长度约为 591 个英文词。AI 最多生成两次；若第一次缺少某些目标词的原形，会把缺失列表反馈给模型并重写整篇文章。
+
+## 快捷键与界面
+
+### 词义学习
+
+- 主键盘 `1`～`5`：选择评分；
+- 小键盘 `1`～`5`：选择评分；
+- 空格：执行当前“查看词义 / 下一词 / 完成”主按钮；
+- 第一次确认后显示 CSV 中的全部词条字段；
+- 顶部显示当前轮次与进度。
+
+### 文章学习
+
+- “我已读完”按钮固定在底部操作栏，不会被文章内容挤出窗口；
+- 空格：执行当前可用的主要按钮；
+- 生成文章或译文失败后可直接重试；
+- 英文文章与中文译文可分别滚动；
+- 状态栏显示文章生成、计时和翻译状态。
+
+### 词库与历史管理
+
+- 词库生成在后台线程执行，界面不会在扫描大型 ECDICT 时完全卡死；
+- 词库列表显示名称、词数、中文考试范围、组合方式和当前状态；
+- 学习历史支持单词搜索和熟练度 1～5 筛选；
+- 可查看学习次数、最近两次评分和最近学习时间；
+- 清空历史会同时清空汇总文件和详细事件文件。
+
+## AI 接口
+
+程序调用 OpenAI-compatible Chat Completions API，使用标准库 `urllib`：
+
+- `BASE_URL` 若填写到 `/v1`，程序自动追加 `/chat/completions`；
+- 也可填写完整的 `/chat/completions` 地址；
+- 请求体包含 `model`、`messages`、`temperature`；
+- 若设置了 API Key，则使用 `Authorization: Bearer ...`；
+- 单次请求超时为 120 秒。
+
+开始学习前必须填写：
 
 - `API_KEY`
 - `BASE_URL`
 - `MODEL`
 - AI 写作提示词
 
-程序会在开始学习前检查这些项目。
+## 数据文件
 
-## AI 接口格式
+### 项目代码
 
-程序调用 OpenAI-compatible Chat Completions 接口：
+- `main.py`：主界面、品牌信息和程序入口；
+- `config_manager.py`：设置、旧配置迁移与界面字体；
+- `vocabulary_tags.py`：网页版一致的 tag 白名单、中文名称和默认难度；
+- `retrieve.py`：按 tag 从 ECDICT 生成词库；
+- `vocabulary_store.py`：命名词库、快照、切换、备份与删除保护；
+- `vital_ranker.py`：VITAL Ranker v0.2.1 的标准库桌面适配；
+- `learning_history.py`：旧历史兼容、扩展汇总与详细事件日志；
+- `learning_flow.py`：完整学习流程、推荐审计与最终写入；
+- `word_study.py`：两阶段词义评分；
+- `article_study.py`：文章、计时、目标词检查、翻译与重试；
+- `tests/test_core.py`：核心兼容与算法回归测试。
 
-- `BASE_URL` 填写到 `/v1` 时，程序自动追加 `/chat/completions`
-- 也可以直接填写以 `/chat/completions` 结尾的完整地址
-- 请求体使用 `model`、`messages`、`temperature`
-- 程序发送 `Authorization: Bearer ...`
+### 运行时生成或维护
 
-## 每轮抽词规则
+- `config.json`：设置；
+- `vocabulary.csv`：当前词库的旧版兼容副本；
+- `vocabulary.previous.csv`：最近一次切换前的词库备份；
+- `vocabularies.json`：词库注册表；
+- `vocabularies/*.csv`：命名词库快照；
+- `learningHistory.csv`：每个单词的当前汇总状态；
+- `learningEvents.csv`：每次已完成会话的逐词详细记录；
+- `selectionAudit.jsonl`：推荐决策审计日志。
 
-- 新学习词名额优先选择 `learningHistory.csv` 中熟练程度为 1 的词。
-- 仍有空缺时，再选择从未出现在学习历史中的词。
-- 复习词先按照熟练程度 2、3、4、5，以 `20:10:5:1` 的数量比例建立候选池。
-- 再从候选池中等概率、不重复地抽取所需复习词。
-- 某些熟练度库存不足时，会继续按同一比例从剩余词中补充候选池。
-- 复习词仍不足时，继续使用历史 1 级词和未学习词补足。
+## 旧版本兼容
 
-## 界面和快捷键
+### `vocabulary.csv`
 
-词义学习阶段：
+若升级前只有旧版 `vocabulary.csv`：
 
-- 数字键 `1`～`5`：选择熟练程度
-- 小键盘 `1`～`5`：选择熟练程度
-- 空格：按下当前“我已评分”主按钮
-- 第一次评分后展示完整词条信息
-- 第二次评分后立即进入下一个单词
+- 首次启动自动登记为“旧版当前词库”；
+- 原文件继续保留并作为当前词库使用；
+- 同时创建一份词库快照；
+- 旧版本仍可读取固定路径 `vocabulary.csv`。
 
-文章学习阶段：
+### `learningHistory.csv`
 
-- “我已读完（空格）”固定显示在窗口底部，不会被文章区域挤出窗口
-- 空格：按下当前主要按钮，包括“我已读完”“完成并继续”和失败后的重试按钮
-- 点击“我已读完”后统计文章词数和阅读时间，然后生成中文译文
+旧版两列格式可直接读取：
 
-## 最终评分
-
-同一单词在文章学习前、后各进行一次完整的词义学习。最终熟练程度为：
-
-```text
-floor((第一次结果 + 2 × 第二次结果) / 3)
+```csv
+单词,熟练程度
+example,3
 ```
 
-结果限制在 1 至 5，并写入 `learningHistory.csv`。
+首次完成新会话后，文件自动升级为扩展格式。旧记录缺少时间信息时，使用旧文件最后修改时间作为兼容估计；旧熟练度会保留，不会被当作未学习。
 
-## 环境
+若新版本已生成 `learningEvents.csv`，详细事件日志是更可靠的数据来源；即使旧桌面版之后把 `learningHistory.csv` 再次写回两列格式，新版本仍会用事件日志修复汇总信息。
 
-只使用 Python 标准库，无需安装额外依赖。推荐 Python 3.12。Windows 的标准 Python/Conda 环境通常带有 Tkinter；部分 Linux 发行版可能需要单独安装 `python3-tk`。
+### `config.json`
 
+- 缺失的新字段自动补默认值；
+- 无效颜色或数值回退到安全默认；
+- 旧的固定 300 词默认提示词自动迁移到动态长度提示词；
+- 精确旧默认 `20/10` 迁移到 `20/3`；
+- 其他用户自定义学习数量保留。
 
+## 测试
 
-# AI-Powered English Vocabulary Learning System
+运行：
 
-This is a desktop vocabulary learning application built with Python's standard library and Tkinter.
+```bash
+python -m compileall -q .
+python -m unittest discover -s tests -v
+```
 
-## Project Structure
+当前回归测试覆盖：
 
-* `config_manager.py` – Creates, loads, and edits `config.json`
-* `learning_flow.py` – Handles word selection, learning workflow, learning history, and final proficiency calculation
-* `word_study.py` – Two-stage vocabulary self-assessment, keyboard shortcuts, and full dictionary entry display
-* `article_study.py` – AI-generated English articles, reading timer, word count, and Chinese translation
-* `retrieve.py` – Generates vocabulary lists from ECDICT's `stardict.csv` using one or more tags
-* `vocabulary_manager.py` – Vocabulary management and learning history interface
-* `main.py` – Main window and application entry point
-* `vocabulary.csv` – The currently selected vocabulary list
-* `learningHistory.csv` – Learning history (created automatically on first use)
-* `config.json` – Configuration file (created automatically on first launch)
+- 旧配置迁移及自定义值保留；
+- 异常配置容错；
+- any/all tag 与重复词 tag 合并；
+- tag 白名单；
+- 旧两列学习历史；
+- 熟练度 1 与绝对新词分离；
+- 新用户回填；
+- 自适应新词配额；
+- 第二轮错位顺序；
+- 动态文章长度；
+- 旧词库自动登记；
+- 命名词库切换与学习记录删除保护；
+- 无第三方 Python 导入；
+- 无 `.bat` / `.ps1` 文件。
 
-## First Launch
+## License
 
-Run:
+Copyright © 2026 ZhuinZ. All Rights Reserved. 详见 `LICENSE`。
+
+---
+
+## English Summary
+
+VITAL Desktop v1.4.2 is a standard-library-only Tkinter vocabulary trainer aligned with the server-side VITAL Ranker v0.2.1. It provides named vocabulary profiles, server-equivalent any/all ECDICT tag matching, a strict unseen-word definition, fixed or adaptive unseen quotas, forgetting-aware review ranking, diversity-aware selection, deranged second-pass ordering, dynamic article length, detailed learning events, recommendation audits, and backward compatibility with legacy desktop CSV/JSON files.
+
+Run it with:
 
 ```bash
 python main.py
 ```
-
-When the program is launched for the first time, it will display instructions for obtaining the vocabulary database. The application uses **ECDICT**:
-
-https://github.com/skywind3000/ECDICT
-
-Steps:
-
-1. Open the ECDICT GitHub repository.
-2. Download `stardict.7z`, or download the entire repository and locate the file.
-3. Extract it with 7-Zip or another archive tool to obtain `stardict.csv`.
-4. Return to the application and open **Manage Vocabulary & Learning History**.
-5. Select `stardict.csv`.
-6. Enter one or more tags, such as `gre`, `cet6`, or `ielts toefl`.
-7. Click **Generate and Switch Vocabulary by Tags**.
-
-The **Download Vocabulary Database** button in the lower-right corner of the main window will reopen the instructions and open the ECDICT repository.
-
-## Vocabulary Management
-
-The **Manage Vocabulary & Learning History** page supports:
-
-* Generating a vocabulary list from a single tag (e.g. `gre`)
-* Generating a vocabulary list from multiple tags separated by spaces, commas, or semicolons
-* **Match Any Tag**: export entries containing at least one specified tag
-* **Match All Tags**: export only entries containing every specified tag
-* Automatic removal of duplicate words
-* Automatic exclusion of the `tag` column while preserving all other dictionary fields
-* Automatic backup of the current `vocabulary.csv` as `vocabulary.previous.csv` before switching
-* Deleting the entire `learningHistory.csv` independently
-
-You can also use the command line directly:
-
-```bash
-python retrieve.py --input stardict.csv --output vocabulary.csv --tags "gre ielts"
-```
-
-Require all specified tags:
-
-```bash
-python retrieve.py --input stardict.csv --output vocabulary.csv --tags "gre ielts" --match-all
-```
-
-## Settings
-
-Before starting your first learning session, open **Settings** and complete the following fields:
-
-* `API_KEY`
-* `BASE_URL`
-* `MODEL`
-* AI writing prompt
-
-The application validates these settings before each learning session.
-
-## AI API Format
-
-The application uses an OpenAI-compatible Chat Completions API.
-
-* If `BASE_URL` ends with `/v1`, the program automatically appends `/chat/completions`.
-* You may also enter the complete endpoint ending with `/chat/completions`.
-* Requests use the `model`, `messages`, and `temperature` fields.
-* Authentication is sent via `Authorization: Bearer ...`.
-
-## Word Selection Strategy
-
-* New-word slots are first filled with words whose proficiency level is **1** in `learningHistory.csv`.
-* Remaining slots are filled with words that have never appeared in the learning history.
-* Review candidates are collected from proficiency levels **2**, **3**, **4**, and **5** using a **20:10:5:1** weighting.
-* Review words are then sampled uniformly at random from the candidate pool without duplication.
-* If some proficiency levels do not contain enough words, the candidate pool is supplemented proportionally from the remaining levels.
-* If there are still not enough review words, proficiency level 1 words and unseen words are used to fill the remaining slots.
-
-## User Interface & Keyboard Shortcuts
-
-### Vocabulary Study
-
-* Number keys `1`–`5`: select proficiency level
-* Numpad `1`–`5`: select proficiency level
-* Space: press the current **I've Rated It** button
-* The complete dictionary entry is displayed after the first rating
-* After the second rating, the program immediately proceeds to the next word
-
-### Article Study
-
-* The **I've Finished Reading (Space)** button is permanently displayed at the bottom of the window and will never be pushed out by the article content.
-* Space: activates the current primary button, including **I've Finished Reading**, **Finish and Continue**, and the retry button after a failed generation.
-* After clicking **I've Finished Reading**, the application calculates the article's word count and reading time, then generates a Chinese translation.
-
-## Final Proficiency Score
-
-Each word is assessed twice: once before the article-reading stage and once afterward.
-
-The final proficiency level is calculated as:
-
-```text
-floor((First Rating + 2 × Second Rating) / 3)
-```
-
-The result is clamped to the range **1–5** and written to `learningHistory.csv`.
-
-## Environment
-
-The application uses only Python's standard library and requires no additional dependencies.
-
-Python **3.12** is recommended. Tkinter is included in standard Python and Conda installations on Windows. On some Linux distributions, you may need to install `python3-tk` separately.

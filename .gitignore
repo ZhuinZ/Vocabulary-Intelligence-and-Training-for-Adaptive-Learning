@@ -1,8 +1,104 @@
+# -----------------------------------------------------------------------------
+# Python caches and test artifacts
+# -----------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+# -----------------------------------------------------------------------------
+# Virtual environments and local package builds
+# -----------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.conda/
+build/
+dist/
+*.egg-info/
+
+# -----------------------------------------------------------------------------
+# Secrets and local environment configuration
+# -----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+
+# VITAL Desktop settings; may contain an AI API key.
 config.json
+config.json.tmp
+config.json.invalid
+config.json.invalid.*
+
+# -----------------------------------------------------------------------------
+# VITAL Desktop learning records and recommendation logs
+# -----------------------------------------------------------------------------
 learningHistory.csv
-stardict.csv
+learningHistory.csv.tmp
+learningEvents.csv
+learningEvents.csv.tmp
+selectionAudit.jsonl
+
+# -----------------------------------------------------------------------------
+# VITAL Desktop generated and local vocabulary data
+# -----------------------------------------------------------------------------
+# Active/backup vocabulary files used for legacy compatibility.
 vocabulary.csv
+vocabulary.csv.tmp
 vocabulary.previous.csv
+
+# Named-vocabulary registry and snapshots.
+vocabularies.json
+vocabularies.json.tmp
+vocabularies.json.invalid
+vocabularies.json.invalid.*
+vocabularies/
+
+# Temporary vocabulary files created while importing ECDICT.
 .vocabulary.generated.csv*
+.vocabulary.generated.*.csv
+
+# Large local ECDICT source files/directories.
+stardict.csv
+stardict.7z
+ECDICT-master/
+
+# -----------------------------------------------------------------------------
+# VITAL Server runtime data (harmless when this is a desktop-only repository)
+# -----------------------------------------------------------------------------
+server/data/*
+!server/data/.gitkeep
+server/user_exports/*
+!server/user_exports/.gitkeep
+
+# -----------------------------------------------------------------------------
+# Temporary files and logs
+# -----------------------------------------------------------------------------
+*.tmp
+*.bak
+*.log
+*~
+
+# -----------------------------------------------------------------------------
+# Obsolete local launch scripts
+# -----------------------------------------------------------------------------
+*.bat
+*.ps1
+
+# -----------------------------------------------------------------------------
+# Editors and operating systems
+# -----------------------------------------------------------------------------
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+Desktop.ini
